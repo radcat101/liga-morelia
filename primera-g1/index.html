@@ -1467,7 +1467,7 @@ function renderGolEdList(){
 function renderCronicas(){
   const cron=getCronicas(), el=document.getElementById('cgrid'), empty=document.getElementById('cgrid-empty');
   document.getElementById('badge-cron').textContent=cron.length;
-  document.getElementById('dot-c').classList.toggle('on',cron.length>0);
+  var _dc=document.getElementById('dot-c'); if(_dc) _dc.classList.toggle('on',cron.length>0);
   if(!cron.length){el.innerHTML='';empty.style.display='block';return;}
   empty.style.display='none';
   el.innerHTML=cron.slice().reverse().map((c,ri)=>{
