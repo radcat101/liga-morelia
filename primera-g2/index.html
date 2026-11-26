@@ -243,7 +243,7 @@ textarea{resize:vertical;min-height:80px}
 #toast{position:fixed;bottom:20px;right:20px;z-index:999;background:var(--v);color:#000;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;padding:9px 16px;border-radius:7px;transform:translateY(70px);opacity:0;transition:all .3s;pointer-events:none}
 #toast.on{transform:translateY(0);opacity:1}
 #toast.er{background:var(--r);color:#fff}
-#goleadores,#cronicas{display:none!important}
+#goleadores,#cronicas,#sponsor-banner-wrap,#sponsor-footer-wrap,#ep-sponsors{display:none!important}
 /* ─── CAPTURA DE MARCADORES ─── */
 .mer2{display:flex;flex-direction:column;gap:6px}
 .mer2-row{display:flex;align-items:center;gap:8px}
@@ -557,6 +557,9 @@ tr.trow-hidden{display:none}
     <details class="rolbox" style="margin-bottom:12px;background:var(--g1);border:1px solid var(--g3);border-radius:10px;padding:10px 12px">
       <summary style="cursor:pointer;font-weight:700;font-size:13px">📋 Pegar rol oficial (llena canchas y horarios)</summary>
       <p style="font-size:11px;color:var(--t2);margin:8px 0">Pega el texto del rol, un partido por renglón. Ejemplo:<br><code>1 TIERRA CALIENTE / TAURO U.D.C. 1 10 HRS.</code></p>
+      <label class="btn bn" style="display:block;text-align:center;margin-bottom:8px;cursor:pointer;position:relative">📄 Subir PDF o imagen del rol
+        <input type="file" accept="image/*,application/pdf" onchange="rolFromFile(this)" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none"></label>
+      <div id="rol-status" style="font-size:11px;color:var(--t2);margin-bottom:6px"></div>
       <textarea id="rol-txt" rows="7" style="width:100%;background:var(--bg);border:1px solid var(--g4);border-radius:8px;color:var(--t);padding:8px;font-size:12px;font-family:monospace"></textarea>
       <button type="button" class="btn bg" style="margin-top:8px;width:100%" onclick="applyRol()">Llenar canchas y horarios</button>
       <div id="rol-res" style="font-size:12px;margin-top:8px"></div>
@@ -1692,6 +1695,41 @@ function _rolFind(tokens){
   found.forEach(function(f){ if(f.i>=last&&res.length<2&&!res.some(function(r){return r.t===f.t;})){ res.push(f); last=f.e; } });
   return res;
 }
+function _loadScript(src){ return new Promise(function(res,rej){ var s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
+async function rolFromFile(inp){
+  var f=inp.files&&inp.files[0]; if(!f) return;
+  var st=document.getElementById('rol-status'), ta=document.getElementById('rol-txt');
+  try{
+    var text='';
+    if(f.type==='application/pdf'||/\.pdf$/i.test(f.name)){
+      st.textContent='Leyendo PDF…';
+      if(!window.pdfjsLib){ await _loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'); pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }
+      var pdf=await pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise, lines=[];
+      for(var pg=1;pg<=pdf.numPages;pg++){
+        var tc=await (await pdf.getPage(pg)).getTextContent(), rows={};
+        tc.items.forEach(function(it){ var y=Math.round(it.transform[5]/3)*3; (rows[y]=rows[y]||[]).push({x:it.transform[4],s:it.str}); });
+        Object.keys(rows).map(Number).sort(function(a,b){return b-a;}).forEach(function(y){ lines.push(rows[y].sort(function(a,b){return a.x-b.x;}).map(function(o){return o.s;}).join(' ').replace(/\s+/g,' ').trim()); });
+      }
+      text=lines.filter(Boolean).join('\n');
+      if(text.replace(/\s/g,'').length<20){ st.textContent='El PDF es una imagen; leyendo con OCR…'; text=''; }
+    }
+    if(!text){
+      st.textContent='Leyendo imagen (OCR)… puede tardar unos segundos';
+      if(!window.Tesseract) await _loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js');
+      var src=f;
+      if(f.type==='application/pdf'||/\.pdf$/i.test(f.name)){ // PDF escaneado: render página 1 a imagen
+        var pdf2=await pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise, page=await pdf2.getPage(1), vp=page.getViewport({scale:2.5}), cv=document.createElement('canvas');
+        cv.width=vp.width; cv.height=vp.height; await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise; src=cv;
+      }
+      var r=await Tesseract.recognize(src,'spa',{logger:function(m){ if(m.status==='recognizing text') st.textContent='Leyendo imagen… '+Math.round(m.progress*100)+'%'; }});
+      text=r.data.text;
+    }
+    ta.value=text.split('\n').map(function(x){return x.replace(/[|]/g,' ').replace(/\s+/g,' ').trim();}).filter(function(x){return x.length>3;}).join('\n');
+    st.textContent='✓ Texto leído. Revisa abajo y corrige si hace falta.';
+    applyRol();
+  }catch(e){ st.textContent='No pude leer el archivo: '+(e&&e.message||e); }
+  inp.value='';
+}
 function applyRol(){
   var j=parseInt(document.getElementById('jsel').value), p=getAllResults()[j]||[];
   var lines=(document.getElementById('rol-txt').value||'').split(/\n+/).map(function(x){return x.trim();}).filter(Boolean);
@@ -1699,7 +1737,8 @@ function applyRol(){
   lines.forEach(function(line){
     var hm=line.match(/(\d{1,2}(?::\d{2})?)\s*(HRS?\.?|H\b)/i);
     var hora=hm?(hm[1].padStart(2,'0')+' HRS.'):'';
-    var body=hm?line.slice(0,hm.index):line;
+    var body=hm?(line.slice(0,hm.index)+' '+line.slice(hm.index+hm[0].length)):line;
+    body=body.replace(/\bVS\b/gi,' ');
     var tok=_rolNorm(body), m=_rolFind(tok);
     if(m.length<2){ if(/[A-Z]{3}/i.test(line)) miss.push(line); return; }
     var orig=body.replace(/\//g,' ').trim().split(/\s+/), cancha='';
