@@ -1696,6 +1696,24 @@ function _rolFind(tokens){
   return res;
 }
 function _loadScript(src){ return new Promise(function(res,rej){ var s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
+// Prepara la imagen para OCR: agranda, pasa a gris e invierte los recuadros oscuros/de color (horas, VS) para leer texto blanco
+async function _rolPrep(src){
+  var img=src;
+  if(!(src instanceof HTMLCanvasElement)){ img=await new Promise(function(res,rej){ var im=new Image(); im.onload=function(){res(im);}; im.onerror=rej; im.src=URL.createObjectURL(src); }); }
+  var W0=img.width||img.naturalWidth, H0=img.height||img.naturalHeight, sc=Math.min(3,Math.max(1,2400/W0));
+  var W=Math.round(W0*sc), H=Math.round(H0*sc), cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  var c=cv.getContext('2d'); c.imageSmoothingQuality='high'; c.drawImage(img,0,0,W,H);
+  var d=c.getImageData(0,0,W,H), px=d.data, n=W*H, g=new Uint8Array(n), m=new Uint8Array(n);
+  for(var i=0;i<n;i++){ var r=px[i*4],gg=px[i*4+1],b=px[i*4+2], y=0.299*r+0.587*gg+0.114*b, sat=Math.max(r,gg,b)-Math.min(r,gg,b); g[i]=y; m[i]=(y<110||(sat>60&&y<170))?1:0; }
+  // densidad de "fondo oscuro" en ventana: solo zonas sólidas (recuadros), no letras
+  var R=Math.round(7*sc), I=new Uint32Array((W+1)*(H+1));
+  for(var yy=0;yy<H;yy++){ var row=0; for(var xx=0;xx<W;xx++){ row+=m[yy*W+xx]; I[(yy+1)*(W+1)+xx+1]=I[yy*(W+1)+xx+1]+row; } }
+  function box(x0,y0,x1,y1){ x0=Math.max(0,x0);y0=Math.max(0,y0);x1=Math.min(W,x1);y1=Math.min(H,y1); return {s:I[y1*(W+1)+x1]-I[y0*(W+1)+x1]-I[y1*(W+1)+x0]+I[y0*(W+1)+x0],a:(x1-x0)*(y1-y0)}; }
+  var solid=new Uint8Array(n);
+  for(var y2=0;y2<H;y2++) for(var x2=0;x2<W;x2++){ var bx=box(x2-R,y2-R,x2+R+1,y2+R+1); if(bx.s/bx.a>0.55) solid[y2*W+x2]=1; }
+  for(var k=0;k<n;k++){ var v=solid[k]?255-g[k]:g[k]; v=v>150?255:(v<90?0:v); px[k*4]=px[k*4+1]=px[k*4+2]=v; px[k*4+3]=255; }
+  c.putImageData(d,0,0); return cv;
+}
 async function rolFromFile(inp){
   var f=inp.files&&inp.files[0]; if(!f) return;
   var st=document.getElementById('rol-status'), ta=document.getElementById('rol-txt');
@@ -1721,6 +1739,7 @@ async function rolFromFile(inp){
         var pdf2=await pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise, page=await pdf2.getPage(1), vp=page.getViewport({scale:2.5}), cv=document.createElement('canvas');
         cv.width=vp.width; cv.height=vp.height; await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise; src=cv;
       }
+      src=await _rolPrep(src);
       var r=await Tesseract.recognize(src,'spa',{logger:function(m){ if(m.status==='recognizing text') st.textContent='Leyendo imagen… '+Math.round(m.progress*100)+'%'; }});
       text=r.data.text;
     }
@@ -1735,8 +1754,8 @@ function applyRol(){
   var lines=(document.getElementById('rol-txt').value||'').split(/\n+/).map(function(x){return x.trim();}).filter(Boolean);
   var ok=0, miss=[];
   lines.forEach(function(line){
-    var hm=line.match(/(\d{1,2}(?::\d{2})?)\s*(HRS?\.?|H\b)/i);
-    var hora=hm?(hm[1].padStart(2,'0')+' HRS.'):'';
+    var hm=line.match(/\b([01]?\d|2[0-3])(?::(\d{2}))?\s*(HRS?\.?|H\b|HR\b)/i)||line.match(/\b([01]?\d|2[0-3]):(\d{2})\b/);
+    var hora=hm?(hm[1].padStart(2,'0')+(hm[2]&&hm[2]!=='00'?':'+hm[2]:'')+' HRS.'):'';
     var body=hm?(line.slice(0,hm.index)+' '+line.slice(hm.index+hm[0].length)):line;
     body=body.replace(/\bVS\b/gi,' ');
     var tok=_rolNorm(body), m=_rolFind(tok);
