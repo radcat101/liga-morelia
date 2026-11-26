@@ -243,6 +243,7 @@ textarea{resize:vertical;min-height:80px}
 #toast{position:fixed;bottom:20px;right:20px;z-index:999;background:var(--v);color:#000;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;padding:9px 16px;border-radius:7px;transform:translateY(70px);opacity:0;transition:all .3s;pointer-events:none}
 #toast.on{transform:translateY(0);opacity:1}
 #toast.er{background:var(--r);color:#fff}
+#goleadores,#cronicas{display:none!important}
 /* ─── CAPTURA DE MARCADORES ─── */
 .mer2{display:flex;flex-direction:column;gap:6px}
 .mer2-row{display:flex;align-items:center;gap:8px}
@@ -439,8 +440,6 @@ tr.trow-hidden{display:none}
     <button onclick="go('posiciones')">Posiciones</button>
     <button onclick="go('jornadas')">Jornadas<span class="ndot" id="dot-j"></span></button>
     <button onclick="go('liguilla')">Liguilla</button>
-    <button onclick="go('goleadores')">Goleadores</button>
-    <button onclick="go('cronicas')">Crónicas<span class="ndot" id="dot-c"></span></button>
     <button onclick="go('equipos')">Equipos</button>
   </nav>
   <div class="hdr-r">
@@ -555,6 +554,13 @@ tr.trow-hidden{display:none}
   <div class="ep" id="ep-j" style="display:none">
     <div class="ept">✏️ Capturar Resultados</div>
     <div style="margin-bottom:11px"><div class="fl">Jornada</div><select id="jsel" onchange="renderME()" style="max-width:190px"></select></div>
+    <details class="rolbox" style="margin-bottom:12px;background:var(--g1);border:1px solid var(--g3);border-radius:10px;padding:10px 12px">
+      <summary style="cursor:pointer;font-weight:700;font-size:13px">📋 Pegar rol oficial (llena canchas y horarios)</summary>
+      <p style="font-size:11px;color:var(--t2);margin:8px 0">Pega el texto del rol, un partido por renglón. Ejemplo:<br><code>1 TIERRA CALIENTE / TAURO U.D.C. 1 10 HRS.</code></p>
+      <textarea id="rol-txt" rows="7" style="width:100%;background:var(--bg);border:1px solid var(--g4);border-radius:8px;color:var(--t);padding:8px;font-size:12px;font-family:monospace"></textarea>
+      <button type="button" class="btn bg" style="margin-top:8px;width:100%" onclick="applyRol()">Llenar canchas y horarios</button>
+      <div id="rol-res" style="font-size:12px;margin-top:8px"></div>
+    </details>
     <div id="melist"></div>
     <button class="btn bg" onclick="saveJornada()">💾 Guardar Jornada</button>
 
@@ -807,7 +813,7 @@ tr.trow-hidden{display:none}
         <div class="shopt" onclick="selShOpt(this,'podio')">🥇 Podio</div>
         <div class="shopt" onclick="selShOpt(this,'jornada')">📅 Jornada</div>
         <div class="shopt" onclick="selShOpt(this,'ultj')">🎯 Última Jornada</div>
-        <div class="shopt" onclick="selShOpt(this,'goleadores')">⚽ Goleadores</div>
+        
         <div class="shopt" onclick="selShOpt(this,'liguilla')">🏆 Liguilla</div>
         <div class="shopt" onclick="selShOpt(this,'equipo')">👕 Mi Equipo</div>
       </div>
@@ -1670,6 +1676,45 @@ function renderME(){
   }).join('');
 }
 
+// ── Pegar rol: detecta equipos aunque vengan abreviados (UNIV. = UNIVERSIDAD, SECCION = SECC, H.2O = H2O)
+function _rolNorm(x){ return (x||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[.,]/g,'').replace(/[^A-Z0-9 ]/g,' ').split(/\s+/).filter(Boolean); }
+function _rolFind(tokens){
+  var found=[];
+  getTeams().forEach(function(t){
+    var T=_rolNorm(t);
+    for(var i=0;i+T.length<=tokens.length;i++){
+      var ok=T.every(function(tk,k){ var L=tokens[i+k]; return L===tk||(L.length>=3&&tk.indexOf(L)===0)||(tk.length>=3&&L.indexOf(tk)===0); });
+      if(ok) found.push({t:t,i:i,e:i+T.length,n:T.join('').length});
+    }
+  });
+  found.sort(function(a,b){return a.i-b.i||b.n-a.n;});
+  var res=[], last=-1;
+  found.forEach(function(f){ if(f.i>=last&&res.length<2&&!res.some(function(r){return r.t===f.t;})){ res.push(f); last=f.e; } });
+  return res;
+}
+function applyRol(){
+  var j=parseInt(document.getElementById('jsel').value), p=getAllResults()[j]||[];
+  var lines=(document.getElementById('rol-txt').value||'').split(/\n+/).map(function(x){return x.trim();}).filter(Boolean);
+  var ok=0, miss=[];
+  lines.forEach(function(line){
+    var hm=line.match(/(\d{1,2}(?::\d{2})?)\s*(HRS?\.?|H\b)/i);
+    var hora=hm?(hm[1].padStart(2,'0')+' HRS.'):'';
+    var body=hm?line.slice(0,hm.index):line;
+    var tok=_rolNorm(body), m=_rolFind(tok);
+    if(m.length<2){ if(/[A-Z]{3}/i.test(line)) miss.push(line); return; }
+    var orig=body.replace(/\//g,' ').trim().split(/\s+/), cancha='';
+    // cancha = texto original después del visitante
+    var normPos=0, out=[];
+    orig.forEach(function(w){ var n=_rolNorm(w); if(!n.length){ return; } if(normPos>=m[1].e) out.push(w); normPos+=n.length; });
+    cancha=out.join(' ').trim();
+    var idx=p.findIndex(function(r){ return (r[0]===m[0].t&&r[3]===m[1].t)||(r[0]===m[1].t&&r[3]===m[0].t); });
+    if(idx<0){ miss.push(line+'  → no está en la J'+j); return; }
+    var ce=document.getElementById('cancha-'+j+'-'+idx), he=document.getElementById('hora-'+j+'-'+idx);
+    if(ce&&cancha) ce.value=cancha; if(he&&hora) he.value=hora; ok++;
+  });
+  document.getElementById('rol-res').innerHTML='<b style="color:var(--v)">✓ '+ok+' partidos llenados.</b> Revisa y toca <b>Guardar Jornada</b>.'
+    +(miss.length?'<div style="color:var(--r);margin-top:4px">No reconocí:<br>'+miss.map(function(x){return '• '+x.replace(/</g,'&lt;');}).join('<br>')+'</div>':'');
+}
 function saveJornada(){
   const j=parseInt(document.getElementById('jsel').value);
   const all=getAllResults(), p=all[j]||[];
@@ -3178,7 +3223,7 @@ const SECS=['inicio','posiciones','jornadas','liguilla','goleadores','cronicas',
 function go(id){
   setTimeout(function(){var b=document.querySelector('#hdr nav button.act');if(b&&b.scrollIntoView)b.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});},30);
   SECS.forEach(s=>document.getElementById(s).classList.toggle('on',s===id));
-  document.querySelectorAll('nav button').forEach((b,i)=>b.classList.toggle('act',SECS[i]===id));
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('act',(b.getAttribute('onclick')||'').indexOf("'"+id+"'")>=0));
   if(id==='jornadas') renderAsistDisplay();
   if(id==='radio') renderRadioSec();
   if(id==='goleadores') renderGols();
